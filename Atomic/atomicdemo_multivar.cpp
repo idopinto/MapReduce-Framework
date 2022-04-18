@@ -24,7 +24,6 @@ void* count(void* arg)
         }
     }
     (*(tc->atomic_counter)) += tc->threadID % 2 << 30;
-    
     return 0;
 }
 
@@ -51,6 +50,6 @@ int main(int argc, char** argv)
     printf("atomic counter first 16 bit: %d\n", atomic_counter.load() & (0xffff));
     printf("atomic counter next 15 bit: %d\n", atomic_counter.load()>>16 & (0x7fff));
     printf("atomic counter last 2 bit: %d\n", atomic_counter.load()>>30);
-    
+
     return 0;
 }
