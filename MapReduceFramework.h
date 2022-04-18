@@ -3,13 +3,19 @@
 
 #include "MapReduceClient.h"
 
+/**
+ *  An identifier of a running job
+ */
 typedef void* JobHandle;
 
 enum stage_t {UNDEFINED_STAGE=0, MAP_STAGE=1, SHUFFLE_STAGE=2, REDUCE_STAGE=3};
 
+/**
+ *  a struct which quantizes the state of a job
+ */
 typedef struct {
-	stage_t stage;
-	float percentage;
+	stage_t stage; // an enum
+	float percentage; // Job progress of current stage. completed tasks / all tasks in the current stage
 } JobState;
 
 void emit2 (K2* key, V2* value, void* context);
