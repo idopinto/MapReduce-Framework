@@ -7,6 +7,7 @@
 #include <string>
 #include <array>
 #include <unistd.h>
+#include <iostream>
 
 class VString : public V1 {
 public:
@@ -69,9 +70,22 @@ public:
     }
 };
 
+void printInputVector(const InputVec& inputVec){
+    std::cout << "~~~~~~~~~~~ Input vector ~~~~~~~~~~~~"<<std::endl;
 
+    int i = 0;
+    for (auto &pair: inputVec) {
+        auto str = dynamic_cast<const VString*>(pair.second)->content;
+        std::cout << "Pair #"<< i <<": (nullptr, " << str << ")"<<std::endl;
+        i++;
+    }
+    std::cout << "~~~~~~~~~~ ------------- ~~~~~~~~~~~~"<<std::endl;
+
+}
 int main(int argc, char** argv)
 {
+    std::cout << "The job: Counting charactr frequency in strings "<<std::endl;
+
     CounterClient client;
     InputVec inputVec;
     OutputVec outputVec;
@@ -82,25 +96,28 @@ int main(int argc, char** argv)
     inputVec.push_back({nullptr, &s1});
     inputVec.push_back({nullptr, &s2});
     inputVec.push_back({nullptr, &s3});
+    printInputVector(inputVec);
     JobState state;
     JobState last_state={UNDEFINED_STAGE,0};
+    std::cout << "Starting the job with 4 threads\nCalling startMapReduceJob..."<<std::endl;
     JobHandle job = startMapReduceJob(client, inputVec, outputVec, 4);
     getJobState(job, &state);
-    printf("stage %d, %f%% \n",state.stage, state.percentage);
+    std::cout << "Expected: (H,1),(e,1),(l,2),(o,1) "<<std::endl;
 
-//	while (state.stage != REDUCE_STAGE || state.percentage != 100.0)
-//	{
-//        if (last_state.stage != state.stage || last_state.percentage != state.percentage){
-//            printf("stage %d, %f%% \n",state.stage, state.percentage);
-//        }
-//		usleep(100000);
-//        last_state = state;
-//		getJobState(job, &state);
-//	}
-//	printf("stage %d, %f%% \n",state.stage, state.percentage);
-//	printf("Done!\n");
-//
-//	closeJobHandle(job);
+    printf("On initialization: stage %d, %f%% \n",state.stage, state.percentage);
+	while (state.stage != REDUCE_STAGE || state.percentage != 100.0)
+	{
+        if (last_state.stage != state.stage || last_state.percentage != state.percentage){
+            printf("stage %d, %f%% \n",state.stage, state.percentage);
+        }
+		usleep(100000);
+        last_state = state;
+		getJobState(job, &state);
+	}
+	printf("stage %d, %f%% \n",state.stage, state.percentage);
+	printf("Done!\n");
+
+	closeJobHandle(job);
 //
 //	for (OutputPair& pair: outputVec) {
 //		char c = ((const KChar*)pair.first)->c;
