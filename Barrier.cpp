@@ -23,7 +23,7 @@ Barrier::~Barrier()
 }
 
 
-void Barrier::barrier()
+void Barrier::barrier(int tid,void (runFunc)(void *), void *arg)
 {
     if (pthread_mutex_lock(&mutex) != 0){
         fprintf(stderr, "[[Barrier]] error on pthread_mutex_lock");
@@ -34,8 +34,21 @@ void Barrier::barrier()
             fprintf(stderr, "[[Barrier]] error on pthread_cond_wait");
             exit(1);
         }
-    } else {
+    }else {
         count = 0;
+        if(tid != 0 ){
+            if (pthread_cond_broadcast(&cv) != 0) {
+                fprintf(stderr, "[[Barrier]] error on pthread_cond_broadcast");
+                exit(1);
+            }
+            if (pthread_cond_wait(&cv2, &mutex) != 0){
+                fprintf(stderr, "[[Barrier]] error on pthread_cond_wait");
+                exit(1);
+            }
+        }
+    }
+    if(tid == 0){
+        runFunc(arg);
         if (pthread_cond_broadcast(&cv) != 0) {
             fprintf(stderr, "[[Barrier]] error on pthread_cond_broadcast");
             exit(1);
