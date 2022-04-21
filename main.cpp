@@ -89,11 +89,11 @@ int main(int argc, char** argv)
     CounterClient client;
     InputVec inputVec;
     OutputVec outputVec;
-    VString s1("Hello");
-    VString s2("world");
+//    VString s1("Hello");
+//    VString s2("world");
 
-//    VString s1("This string is full of characters");
-//    VString s2("Multithreading is awesome");
+    VString s1("This string is full of characters");
+    VString s2("Multithreading is awesome");
     VString s3("race conditions are bad");
     inputVec.push_back({nullptr, &s1});
     inputVec.push_back({nullptr, &s2});
@@ -101,7 +101,6 @@ int main(int argc, char** argv)
     printInputVector(inputVec);
     JobState state;
     JobState last_state={UNDEFINED_STAGE,0};
-//    std::cout << "Starting the job with 4 threads\nCalling startMapReduceJob..."<<std::endl;
     JobHandle job = startMapReduceJob(client, inputVec, outputVec, 3);
     getJobState(job, &state);
 
@@ -119,14 +118,14 @@ int main(int argc, char** argv)
 
 	closeJobHandle(job);
 
-//	for (OutputPair& pair: outputVec) {
-//		char c = ((const KChar*)pair.first)->c;
-//		int count = ((const VCount*)pair.second)->count;
-//		printf("The character %c appeared %d time%s\n",
-//			c, count, count > 1 ? "s" : "");
-//		delete pair.first;
-//		delete pair.second;
-//	}
+	for (OutputPair& pair: outputVec) {
+		char c = ((const KChar*)pair.first)->c;
+		int count = ((const VCount*)pair.second)->count;
+		printf("The character %c appeared %d time%s\n",
+			c, count, count > 1 ? "s" : "");
+		delete pair.first;
+		delete pair.second;
+	}
 
     return 0;
 }

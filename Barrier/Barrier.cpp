@@ -49,7 +49,7 @@ void Barrier::barrier()
 	}
 }
 
-void Barrier::barrier(void (*func)(void *), void *func_arg) {
+void Barrier::barrier() {
     if (pthread_mutex_lock(&mutex) != 0){
         fprintf(stderr, "[[Barrier]] error on pthread_mutex_lock");
         exit(1);
@@ -70,4 +70,14 @@ void Barrier::barrier(void (*func)(void *), void *func_arg) {
         fprintf(stderr, "[[Barrier]] error on pthread_mutex_unlock");
         exit(1);
     }
+}
+
+void Barrier::wakeUp(){
+
+  count = 0;
+  if (pthread_cond_broadcast(&cv) != 0) {
+      fprintf(stderr, "[[Barrier]] error on pthread_cond_broadcast");
+      exit(1);
+    }
+
 }

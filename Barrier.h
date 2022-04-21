@@ -5,17 +5,21 @@
 // a multiple use barrier
 
 class Barrier {
-public:
-    Barrier(int numThreads);
-    ~Barrier();
-    void barrier(int tid,void (func)(void *), void *func_arg);
+ public:
+  Barrier(int numThreads);
+  ~Barrier();
+  void barrier();
+  void barrier2(int tid,void (func)(void *), void *func_arg);
 
-private:
-    pthread_mutex_t mutex;
-    pthread_cond_t cv;
-    pthread_cond_t cv2;
-    int count;
-    int numThreads;
+  void wakeUp();
+
+ private:
+  pthread_mutex_t mutex;
+  pthread_cond_t cv;
+  pthread_cond_t cv2;
+
+  int count;
+  int numThreads;
 };
 
 #endif //BARRIER_H
