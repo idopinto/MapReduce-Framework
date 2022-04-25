@@ -9,7 +9,7 @@ class Barrier {
   Barrier(int numThreads);
   ~Barrier();
   void barrier();
-  void barrier2(int tid,void (func)(void *), void *func_arg);
+//  void barrier2(int tid,void (func)(void *), void *func_arg);
 
   void wakeUp();
 
