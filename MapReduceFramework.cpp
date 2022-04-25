@@ -217,7 +217,6 @@ void emit2 (K2* key, V2* value, void* context){
     exit(1);
   }
   jc->intermediateVectors[id]->emplace_back (key,value);
-//  jc->midVecMap.at(tid_iter->second)->emplace_back(key,value);
   jc->intermediateVecCounter++; // not atomic but there is mutex
 //  pthread_mutex_unlock(&jc->mutexEmit);
 }
@@ -260,24 +259,24 @@ void* startRoutine(void* job)
   /* Map*/
   while (jc->inputVecCounter < limit)
     {
-      pthread_mutex_lock (&jc->mutexBinary);
-
       auto current_pair = jc->inputVec.at (jc->inputVecCounter); // critical section
-      //  pthread_mutex_lock (&mutexPrints);
-//      std::cout << dynamic_cast<const VString *>(current_pair.second)->content
-//                << " by: " << id << std::endl;
-//      pthread_mutex_unlock (&mutexPrints);
-      (*(jc->jobStateCounter))++; // atomic operation
-//      pthread_mutex_lock (&jc->mutexBinary);
+      pthread_mutex_lock (&mutexPrints);
+      std::cout << dynamic_cast<const VString *>(current_pair.second)->content
+                << " by: " << id << std::endl;
+      printf("limit: %lu, counter: %d\n",limit,jc->inputVecCounter);
+      pthread_mutex_unlock (&mutexPrints);
+     ++(*(jc->jobStateCounter)); // atomic operation
+
+      pthread_mutex_lock (&jc->mutexBinary);
       jc->inputVecCounter = jc->jobStateCounter->load () & DONE;
-//      pthread_mutex_unlock (&jc->mutexBinary);
-      jc->client->map (current_pair.first, current_pair.second, job);
       pthread_mutex_unlock (&jc->mutexBinary);
 
+      jc->client->map (current_pair.first, current_pair.second, job);
+
     }
-  printMidVecMap(jc->intermediateVectors[id]);
   /* Sort Stage*/
-//  std::sort (midVec->begin (), midVec->end (), compareKeys);
+  std::sort (jc->intermediateVectors[id]->begin (), jc->intermediateVectors[id]->end (), compareKeys);
+  printMidVecMap(jc->intermediateVectors[id]);
 
   /*wait until all threads reach. then only thread 0 goes to shuffle and the rest are waiting for him*/
 //  jc->barrier.barrier ();

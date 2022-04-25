@@ -89,15 +89,15 @@ int main(int argc, char** argv)
     CounterClient client;
     InputVec inputVec;
     OutputVec outputVec;
-    VString s1("Hello");
-    VString s2("world");
+//    VString s1("Hello");
+//    VString s2("world");
 
-//    VString s1("This string is full of characters");
-//    VString s2("Multithreading is awesome");
-//    VString s3("race conditions are bad");
+    VString s1("This string is full of characters");
+    VString s2("Multithreading is awesome");
+    VString s3("race conditions are bad");
     inputVec.push_back({nullptr, &s1});
     inputVec.push_back({nullptr, &s2});
-//    inputVec.push_back({nullptr, &s3});
+    inputVec.push_back({nullptr, &s3});
     printInputVector(inputVec);
     JobState state;
     JobState last_state={UNDEFINED_STAGE,0};
