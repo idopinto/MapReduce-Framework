@@ -75,7 +75,7 @@ typedef struct JobContext{
     pthread_mutex_t mutexBinary = PTHREAD_MUTEX_INITIALIZER;
     pthread_mutex_t mutexEmit = PTHREAD_MUTEX_INITIALIZER;
     pthread_mutex_t mutexReduce =  PTHREAD_MUTEX_INITIALIZER;
-    pthread_mutex_t mutexInsert =  PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_t mutexGetJobState =  PTHREAD_MUTEX_INITIALIZER;
 
 //    sem_t semShuffle;
 
@@ -172,10 +172,33 @@ void waitForJob(JobHandle job){
  * @param state
  */
 void getJobState(JobHandle job, JobState* state){
-    auto* j = static_cast<JobContext*>(job);
-    state->stage = j->jobState.stage;
-    state->percentage = j->jobState.percentage;
+    auto* jc = static_cast<JobContext*>(job);
+  pthread_mutex_lock(&jc->mutexGetJobState);
+  auto p = calcPercentage(job);
+    if (p == 0){
+    std::cerr<<"Error division by zero"<<std::endl;
+    exit(1);
+    }
+    jc->jobState.percentage = p;
+    if(p == 100.0){
+        (*(jc->jobStateCounter)) += (uint64_t)1 << STAGE_BITS;
+        jc->jobState.stage = (stage_t)(jc->jobStateCounter->load() >> STAGE_BITS);
+        (*jc->jobStateCounter) = (*jc->jobStateCounter) & 0xC000000000000000 | (uint64_t)jc->intermediateVecCounter <<TOTAL;
+
+    }
+    pthread_mutex_unlock(&jc->mutexGetJobState);
+    state->stage = jc->jobState.stage;
+    state->percentage = jc->jobState.percentage;
+
 }
+
+float calcPercentage(void* job){
+    auto* jc = (JobContext *) job;
+    float total = GET_TOTAL_TO_PROCESS(jc->jobStateCounter->load());
+    float done = GET_ALREADY_PROCESSED(jc->jobStateCounter->load());
+    return (total == 0) ? 0: (100 * (done/total));
+}
+
 /**
  * – Releasing all resources of a job. You should prevent releasing resources
  * before the job finished. After this function is called the job handle will be invalid.
@@ -259,20 +282,16 @@ void* startRoutine(void* job)
   /* Map*/
   while (jc->inputVecCounter < limit)
     {
-//      auto current_pair = jc->inputVec.at (jc->inputVecCounter); // critical section
-
      ++(*(jc->jobStateCounter)); // atomic operation
-
       pthread_mutex_lock (&jc->mutexBinary);
       auto current_pair = jc->inputVec.at (jc->inputVecCounter); // critical section
       jc->inputVecCounter = jc->jobStateCounter->load () & DONE;
       pthread_mutex_unlock (&jc->mutexBinary);
-      pthread_mutex_lock (&mutexPrints);
-      std::cout << dynamic_cast<const VString *>(current_pair.second)->content
-      << " by: " << id << std::endl;
-    printf("limit: %lu, counter: %d\n",limit,jc->inputVecCounter);
-    pthread_mutex_unlock (&mutexPrints);
-
+//      pthread_mutex_lock (&mutexPrints);
+//      std::cout << dynamic_cast<const VString *>(current_pair.second)->content
+//      << " by: " << id << std::endl;
+//      printf("limit: %lu, counter: %d\n",limit,jc->inputVecCounter);
+//      pthread_mutex_unlock (&mutexPrints);
       jc->client->map (current_pair.first, current_pair.second, job);
 
     }
@@ -291,34 +310,8 @@ void* startRoutine(void* job)
   }
   jc->barrier.barrier();
   reduce(job);
-//  if (afterBarrierThread->second == 0)
-//    { shuffle (job); }
-//  jc->barrier.barrier ();
-//  reduce (job);
   return nullptr;
 }
-
-
-
-  //wait
-//  sem_wait(&jc->semShuffle);
-////  pthread_mutex_lock(&mutexPrints);
-////  printf("\nEntered..\n");
-////  pthread_mutex_unlock(&mutexPrints);
-//  //critical section
-//  if(jc->tMap[pthread_self()] == 0)
-//    {
-//      shuffle (job);
-//    }
-//  //signal
-//  sem_post(&jc->semShuffle);
-
-//
-
-
-  /*Reduce*/
-//  reduce(job);
-
 
 
 void reduce (void *job)
@@ -330,43 +323,21 @@ void reduce (void *job)
     pthread_mutex_lock (&jc->mutexReduce);
     IntermediateVec currentVector = jc->shuffledQueue.back();
     jc->shuffledQueue.pop_back();
-    pthread_mutex_lock (&mutexPrints);
-//    printMidVecMap(&currentVector);
-    std::cout<<"reduced  by: "<<jc->tMap[pthread_self()]<<std::endl;
-    pthread_mutex_unlock (&mutexPrints);
+//    pthread_mutex_lock (&mutexPrints);
+////    printMidVecMap(&currentVector);
+//    std::cout<<"reduced  by: "<<jc->tMap[pthread_self()]<<std::endl;
+//    pthread_mutex_unlock (&mutexPrints);
     pthread_mutex_unlock (&jc->mutexReduce);
     jc->client->reduce (&currentVector,job);
   }
 
-  printOutputVecMap(&jc->outputVec);
+//  printOutputVecMap(&jc->outputVec);
 
 }
 
 
-float calcPercentage(void* job){
-  auto* jc = (JobContext *) job;
-  float total = GET_TOTAL_TO_PROCESS(jc->jobStateCounter->load());
-  float done = GET_ALREADY_PROCESSED(jc->jobStateCounter->load());
-  return (total == 0) ? 0: (100 * (done/total));
-}
 
-void updateJobState(void* job){
-  auto* jc = (JobContext *) job;
-  auto p = calcPercentage(job);
-  if(p == 0){
-      std::cerr<<"Error division by zero"<<std::endl;
-      exit(1);
-    }
-//    std::cout << "new percentage: " << p <<std::endl;
-  jc->jobState.percentage = p;
 
-//    if(jc->jobState.percentage == 100.0){
-//        (*(jc->jobStateCounter)) += (uint64_t)1 << STAGE_BITS;
-//        jc->jobState.stage = (stage_t)(jc->jobStateCounter->load() >> STAGE_BITS);
-//        (*jc->jobStateCounter) = (*jc->jobStateCounter) & 0xC000000000000000 | (uint64_t)jc->uniqueKeys->size() <<TOTAL;
-//    }
-
-}
 
 
 int findFirstNotEmptyVector(void *job){
@@ -434,9 +405,9 @@ void shuffle(void* job){
       index = findFirstNotEmptyVector (job);
     }
 
-  for (auto& vec:jc->shuffledQueue){
-      printMidVecMap(&vec);
-  }
+//  for (auto& vec:jc->shuffledQueue){
+//      printMidVecMap(&vec);
+//  }
 }
 
 bool compareKeys(IntermediatePair p1,IntermediatePair p2)
@@ -482,21 +453,3 @@ void printOutputVecMap(OutputVec *vec){
   pthread_mutex_unlock(&mutexPrints);
 
 }
-
-//struct ThreadContext{
-//    ThreadContext() : id(0), tid(0), has_waited(false), jobContext(nullptr){}
-//    unsigned int id;
-//    pthread_t tid;
-//    std::atomic<bool> has_waited;
-//    JobContext *jobContext;
-//};
-
-//bool isContainsKey(void* job,K2* key){
-//    auto* jc = (JobContext *) job;
-//    for (auto& k: *jc->uniqueKeys) {
-//        if(!(key < k | k < key)){
-//            return true;
-//        }
-//    }
-//    return false;
-//}
