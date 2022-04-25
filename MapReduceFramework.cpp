@@ -235,15 +235,15 @@ passed from the framework to the client's map function as parameter.
 void emit3 (K3* key, V3* value, void* context){
   auto jc = static_cast<JobContext*>(context);
 
-  pthread_mutex_lock(&jc->mutexEmit);
-  auto tid_iter = jc->tMap.find(pthread_self());
-  if(tid_iter == jc->tMap.end()){
-      printf("ERROR3");
-      exit(1);
+//  pthread_mutex_lock(&jc->mutexEmit);
+    auto id = get_thread_index (context);
+    if(id == -1){
+    fprintf(stderr,"error");
+    exit(1);
     }
   jc->outputVec.emplace_back(key,value);
   jc->outputVecCounter++; // not atomic but there is mutex
-  pthread_mutex_unlock(&jc->mutexEmit);
+//  pthread_mutex_unlock(&jc->mutexEmit);
 }
 
 
@@ -259,17 +259,19 @@ void* startRoutine(void* job)
   /* Map*/
   while (jc->inputVecCounter < limit)
     {
-      auto current_pair = jc->inputVec.at (jc->inputVecCounter); // critical section
-      pthread_mutex_lock (&mutexPrints);
-      std::cout << dynamic_cast<const VString *>(current_pair.second)->content
-                << " by: " << id << std::endl;
-      printf("limit: %lu, counter: %d\n",limit,jc->inputVecCounter);
-      pthread_mutex_unlock (&mutexPrints);
+//      auto current_pair = jc->inputVec.at (jc->inputVecCounter); // critical section
+
      ++(*(jc->jobStateCounter)); // atomic operation
 
       pthread_mutex_lock (&jc->mutexBinary);
+      auto current_pair = jc->inputVec.at (jc->inputVecCounter); // critical section
       jc->inputVecCounter = jc->jobStateCounter->load () & DONE;
       pthread_mutex_unlock (&jc->mutexBinary);
+      pthread_mutex_lock (&mutexPrints);
+      std::cout << dynamic_cast<const VString *>(current_pair.second)->content
+      << " by: " << id << std::endl;
+    printf("limit: %lu, counter: %d\n",limit,jc->inputVecCounter);
+    pthread_mutex_unlock (&mutexPrints);
 
       jc->client->map (current_pair.first, current_pair.second, job);
 
@@ -279,13 +281,16 @@ void* startRoutine(void* job)
   printMidVecMap(jc->intermediateVectors[id]);
 
   /*wait until all threads reach. then only thread 0 goes to shuffle and the rest are waiting for him*/
-//  jc->barrier.barrier ();
-//  auto afterBarrierThread = jc->tMap.find (pthread_self ());
-//  if (afterBarrierThread == jc->tMap.end ())
-//    {
-//      printf ("ERROR - thread not found after barrier - start routine");
-//      exit (1);
-//    }
+  jc->barrier.barrier ();
+  auto afterBarrierId = get_thread_index(job);
+  if(afterBarrierId == -1){
+      exit(1);
+  }
+  if(afterBarrierId == 0){
+    shuffle(job);
+  }
+  jc->barrier.barrier();
+  reduce(job);
 //  if (afterBarrierThread->second == 0)
 //    { shuffle (job); }
 //  jc->barrier.barrier ();
@@ -325,10 +330,10 @@ void reduce (void *job)
     pthread_mutex_lock (&jc->mutexReduce);
     IntermediateVec currentVector = jc->shuffledQueue.back();
     jc->shuffledQueue.pop_back();
-      pthread_mutex_lock (&mutexPrints);
-      printMidVecMap(&currentVector);
-      std::cout<<" is being now being reduced  by: "<<jc->tMap[pthread_self()]<<std::endl;
-      pthread_mutex_unlock (&mutexPrints);
+    pthread_mutex_lock (&mutexPrints);
+//    printMidVecMap(&currentVector);
+    std::cout<<"reduced  by: "<<jc->tMap[pthread_self()]<<std::endl;
+    pthread_mutex_unlock (&mutexPrints);
     pthread_mutex_unlock (&jc->mutexReduce);
     jc->client->reduce (&currentVector,job);
   }
@@ -362,33 +367,38 @@ void updateJobState(void* job){
 //    }
 
 }
-//int findFirstNotEmptyVector(void *job){
-//  auto* jc =  static_cast<JobContext*>(job);
-//  for (auto& p : jc->midVecMap)
-//    {
-//      if(!p.second->empty()){
-//         return p.first;
-//      }
-//    }
-//    return -1;
-//}
-//IntermediatePair popMaxKey(void* job,int index){
-//  auto* jc =  static_cast<JobContext*>(job);
-////  int index = findFirstNotEmptyVector (job); // if -1;
-//  auto length = jc->midVecMap.at(index)->size();
+
+
+int findFirstNotEmptyVector(void *job){
+  auto* jc =  static_cast<JobContext*>(job);
+  for(int i=0;i<jc->numOfThreads;i++){
+      if(!jc->intermediateVectors[i]->empty()){
+          return i;
+      }
+  }
+
+    return -1;
+}
+
+IntermediatePair popMaxKey(void* job,int index){
+  auto* jc =  static_cast<JobContext*>(job);
+  auto length = jc->intermediateVectors[index]->size();
+  IntermediatePair maxPair = jc->intermediateVectors[index]->at(length-1);
 //  IntermediatePair maxPair = jc->midVecMap.at(index)->at (length-1);
-//  for (auto& pair: jc->midVecMap){
-//      length =  pair.second->size();
-//      if(length == 0){continue;}
-//      auto curKey = pair.second->at (length-1);
-//      if(maxPair.first < curKey.first){
-//        maxPair= curKey;
-//        index = pair.first;
-//      }
-//  }
-//  jc->midVecMap.at(index)->pop_back();
-//  return maxPair;
-//}
+   for (int i=0;i <jc->numOfThreads;i++ ) {
+        length = jc->intermediateVectors[i]->size();
+        if(length == 0){ continue;}
+        auto curKey =  jc->intermediateVectors[i]->at(length-1);
+        if(maxPair.first < curKey.first){
+        maxPair= curKey;
+        index = i;
+        }
+
+   }
+   jc->intermediateVectors[index]->pop_back();
+   return maxPair;
+
+}
 
 void appendToShuffleQ(void* job ,IntermediatePair pair){
   auto* jc =  static_cast<JobContext*>(job);
@@ -409,24 +419,25 @@ void appendToShuffleQ(void* job ,IntermediatePair pair){
   }
 
 }
-//void shuffle(void* job){
-//  auto* jc =  static_cast<JobContext*>(job);
-//
-//  pthread_mutex_lock (&mutexPrints);
-//    printf("%d in shuffle..",jc->tMap[pthread_self()]);
-//  pthread_mutex_unlock (&mutexPrints);
-//
-//  int index = findFirstNotEmptyVector (job);
-//  while(index != -1)
-//    {
-//      appendToShuffleQ (job,popMaxKey(job,index));
-//      index = findFirstNotEmptyVector (job);
-//    }
-//
-//  for (auto& vec:jc->shuffledQueue){
-//      printMidVecMap(&vec);
-//  }
-//}
+
+void shuffle(void* job){
+  auto* jc =  static_cast<JobContext*>(job);
+
+  pthread_mutex_lock (&mutexPrints);
+    printf("%d in shuffle..\n",jc->tMap[pthread_self()]);
+  pthread_mutex_unlock (&mutexPrints);
+
+  int index = findFirstNotEmptyVector (job);
+  while(index != -1)
+    {
+      appendToShuffleQ (job,popMaxKey(job,index));
+      index = findFirstNotEmptyVector (job);
+    }
+
+  for (auto& vec:jc->shuffledQueue){
+      printMidVecMap(&vec);
+  }
+}
 
 bool compareKeys(IntermediatePair p1,IntermediatePair p2)
 {
