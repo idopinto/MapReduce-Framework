@@ -2,7 +2,7 @@
 // Created by ilana on 18/04/2022.
 //
 
-#include "MapReduceFramework2.h"
+#include "MapReduceFramework.h"
 #include <cstdio>
 #include <string>
 #include <array>
@@ -89,22 +89,76 @@ int main(int argc, char** argv)
     CounterClient client;
     InputVec inputVec;
     OutputVec outputVec;
-//    VString s1("Hello");
-//    VString s2("world");
-//    VString s3("ilana");
-//    VString s4("ido");
-    VString s1("This string is full of characters");
-    VString s2("Multithreading is awesome");
-    VString s3("race conditions are bad");
+    VString s1("Hello");
+    VString s2("world");
+    VString s3("ilana");
+    VString s4("ido");
+    VString s5("This string is full of characters");
+    VString s6("Multithreading is awesome");
+    VString s7("race conditions are bad");
+    VString s8("LO");
+    VString s9("A");
+    VString s10("B");
+    VString s11("C");
+    VString s12("D");
+    VString s13("E");
+    VString s14("F");
+    VString s15("G");
+    VString s16("H");
+    VString s17("P");
+    VString s18("O");
+    VString s19("R");
+    VString s20("Q");
+    VString s21("Stuff");
+    VString s22("I");
+    VString s23("Hate");
+    VString s24("OS");
+    VString s25("VERY");
+    VString s26("MUCH");
+    VString s27("SO");
+    VString s28("MUCH");
+    VString s29("YOU");
+    VString s30("CANT");
+    VString s31("IMAGINE");
+    VString s32("MOTHERFUCKER");
     inputVec.push_back({nullptr, &s1});
     inputVec.push_back({nullptr, &s2});
     inputVec.push_back({nullptr, &s3});
-//    inputVec.push_back({nullptr, &s4});
+    inputVec.push_back({nullptr, &s4});
+    inputVec.push_back({nullptr, &s5});
+    inputVec.push_back({nullptr, &s6});
+    inputVec.push_back({nullptr, &s7});
+    inputVec.push_back({nullptr, &s8});
+    inputVec.push_back({nullptr, &s9});
+    inputVec.push_back({nullptr, &s10});
+    inputVec.push_back({nullptr, &s11});
+    inputVec.push_back({nullptr, &s12});
+    inputVec.push_back({nullptr, &s13});
+    inputVec.push_back({nullptr, &s14});
+    inputVec.push_back({nullptr, &s15});
+    inputVec.push_back({nullptr, &s16});
+    inputVec.push_back({nullptr, &s17});
+    inputVec.push_back({nullptr, &s18});
+    inputVec.push_back({nullptr, &s19});
+    inputVec.push_back({nullptr, &s20});
+    inputVec.push_back({nullptr, &s21});
+    inputVec.push_back({nullptr, &s22});
+    inputVec.push_back({nullptr, &s23});
+    inputVec.push_back({nullptr, &s24});
+    inputVec.push_back({nullptr, &s25});
+    inputVec.push_back({nullptr, &s26});
+    inputVec.push_back({nullptr, &s27});
+    inputVec.push_back({nullptr, &s28});
+    inputVec.push_back({nullptr, &s29});
+    inputVec.push_back({nullptr, &s30});
+    inputVec.push_back({nullptr, &s31});
+    inputVec.push_back({nullptr, &s32});
+
 
     printInputVector(inputVec);
     JobState state;
     JobState last_state={UNDEFINED_STAGE,0};
-    JobHandle job = startMapReduceJob(client, inputVec, outputVec, 3);
+    JobHandle job = startMapReduceJob(client, inputVec, outputVec, 5);
     getJobState(job, &state);
 
 	while (state.stage != REDUCE_STAGE || state.percentage != 100.0)
@@ -113,7 +167,7 @@ int main(int argc, char** argv)
         if (last_state.stage != state.stage || last_state.percentage != state.percentage){
             printf("stage %d, %f%% \n",state.stage, state.percentage);
         }
-		usleep(2);
+//		usleep(2);
         last_state = state;
 		getJobState(job, &state);
 	}
@@ -133,4 +187,5 @@ int main(int argc, char** argv)
 
     return 0;
 }
+//
 
