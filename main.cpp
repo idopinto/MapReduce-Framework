@@ -89,33 +89,31 @@ int main(int argc, char** argv)
     CounterClient client;
     InputVec inputVec;
     OutputVec outputVec;
-    VString s1("Hello");
-    VString s2("world");
-    VString s3("ilana");
-    VString s4("ido");
-//    VString s1("This string is full of characters");
-//    VString s2("Multithreading is awesome");
-//    VString s3("race conditions are bad");
+//    VString s1("Hello");
+//    VString s2("world");
+//    VString s3("ilana");
+//    VString s4("ido");
+    VString s1("This string is full of characters");
+    VString s2("Multithreading is awesome");
+    VString s3("race conditions are bad");
     inputVec.push_back({nullptr, &s1});
     inputVec.push_back({nullptr, &s2});
     inputVec.push_back({nullptr, &s3});
-    inputVec.push_back({nullptr, &s4});
+//    inputVec.push_back({nullptr, &s4});
 
     printInputVector(inputVec);
     JobState state;
     JobState last_state={UNDEFINED_STAGE,0};
-    JobHandle job = startMapReduceJob(client, inputVec, outputVec, 10);
+    JobHandle job = startMapReduceJob(client, inputVec, outputVec, 3);
     getJobState(job, &state);
 
 	while (state.stage != REDUCE_STAGE || state.percentage != 100.0)
 	{
-//	    if(state.stage == SHUFFLE_STAGE){
-//	        printf("stage %d, %f%% \n",state.stage, state.percentage);
-//	    }
+
         if (last_state.stage != state.stage || last_state.percentage != state.percentage){
             printf("stage %d, %f%% \n",state.stage, state.percentage);
         }
-		usleep(100000);
+		usleep(2);
         last_state = state;
 		getJobState(job, &state);
 	}

@@ -12,8 +12,10 @@
 #include <bits/stdc++.h>
 #include <semaphore.h>
 #include <sys/unistd.h>
+
 pthread_mutex_t mutexPrints = PTHREAD_MUTEX_INITIALIZER;
 
+#define MAIN_THREAD_ID 0
 void printInterVectors(IntermediateVec *vec);
 bool compareKeys(IntermediatePair p1,IntermediatePair p2);
 bool compareIfKeysEqual(IntermediatePair p1,IntermediatePair p2);
@@ -43,12 +45,15 @@ public:
     int count;
 };
 
-
-
 typedef struct ThreadContext{
     int id;
-    IntermediateVec *intermediateVector;
+    IntermediateVec intermediateVector;
     JobContext* job;
+    bool hasWaited;
+
+    ~ThreadContext(){
+//        delete intermediateVector;
+    }
 }ThreadContext;
 
 typedef struct JobContext{
@@ -62,72 +67,84 @@ typedef struct JobContext{
     ThreadContext* threadContexts;
     std::deque<IntermediateVec> shuffledQueue;
     std::atomic<uint64_t> *jobStateCounter;
-    Barrier *barrier;
+    Barrier *barrier; //
     uint32_t indexToProcessMap=0;
     uint64_t totalNumOfPairs=0;
-//    uint32_t shuffleReduceCounter=0;
-
     pthread_mutex_t mutexMap = PTHREAD_MUTEX_INITIALIZER;
-
     pthread_mutex_t mutexEmit = PTHREAD_MUTEX_INITIALIZER;
     pthread_mutex_t mutexReduce =  PTHREAD_MUTEX_INITIALIZER;
-    pthread_mutex_t mutexGetJobState =  PTHREAD_MUTEX_INITIALIZER;
+//    pthread_mutex_t mutexGetJobState =  PTHREAD_MUTEX_INITIALIZER;
+
+    ~JobContext(){
+        delete[] threadContexts;
+
+        delete[] threads;
+        delete jobStateCounter;
+        delete barrier;
+
+        if (pthread_mutex_destroy(&this->mutexMap) != 0)
+        {
+            printf("system error: error on pthread_mutex_destroy");
+        }
+
+        if (pthread_mutex_destroy(&this->mutexEmit) != 0)
+        {
+            printf("system error: error on pthread_mutex_destroy");
+        }
+
+        if (pthread_mutex_destroy(&this->mutexReduce) != 0)
+        {
+            printf("system error: error on pthread_mutex_destroy");
+        }
+
+    }
 }JobContext;
 
 
 void emit2 (K2* key, V2* value, void* context){
     ThreadContext* tc = (ThreadContext*)context;
     pthread_mutex_lock(&tc->job->mutexEmit);
-    tc->intermediateVector->emplace_back(key,value);
+    tc->intermediateVector.emplace_back(key,value);
     pthread_mutex_unlock(&tc->job->mutexEmit);
 
 }
+
 void emit3 (K3* key, V3* value, void* context){
     ThreadContext* tc= (ThreadContext*)context;
     pthread_mutex_lock(&tc->job->mutexEmit);
     tc->job->outputVec->emplace_back(key,value);
     pthread_mutex_unlock(&tc->job->mutexEmit);
 }
+
 void* threadStartFunc(void* thread){
     ThreadContext* tc = (ThreadContext*)thread;
     auto limit = tc->job->inputVec.size ();
     /* Map stage */
-
-    while(tc->job->indexToProcessMap < limit)
-    {
+    while(tc->job->indexToProcessMap < limit){
         pthread_mutex_lock(&tc->job->mutexMap);
+        if(tc->job->indexToProcessMap >= limit){break;}
         auto current_pair = tc->job->inputVec[tc->job->indexToProcessMap]; // critical section
         (*tc->job->jobStateCounter)++;
         tc->job->indexToProcessMap = (*tc->job->jobStateCounter) & 31;
+//        printf("stage 1: %lu\n",tc->job->jobStateCounter->load()&31);
         pthread_mutex_unlock(&tc->job->mutexMap);
         tc->job->client->map (current_pair.first, current_pair.second, thread);
     }
-//    do{
-//        pthread_mutex_lock(&tc->job->mutexMap);
-//        auto current_pair = tc->job->inputVec[tc->job->indexToProcessMap]; // critical section
-//        (*tc->job->jobStateCounter)++;
-//        tc->job->indexToProcessMap = (*tc->job->jobStateCounter) & 31;
-//        pthread_mutex_unlock(&tc->job->mutexMap);
-//        tc->job->client->map (current_pair.first, current_pair.second, thread);
-//
-//    }while(tc->job->indexToProcessMap < limit);
     /* Sort */
+    std::sort (tc->intermediateVector.begin (), tc->intermediateVector.end (), compareKeys);
 
-    std::sort (tc->intermediateVector->begin (), tc->intermediateVector->end (), compareKeys);
     /*Map stage is over*/
     tc->job->barrier->barrier();
-//    printInterVectors(tc->intermediateVector);
-    if(tc->id == 0){shuffle(thread);}
+    if(tc->id == MAIN_THREAD_ID){shuffle(thread);}
     tc->job->barrier->barrier();
     reduce(thread);
-
-    return nullptr;
+    pthread_exit(NULL);
 }
 
 int findFirstNotEmptyVector(void *job){
     JobContext* jc =  (JobContext*)job;
     for(int i=0;i<jc->numOfThreads;i++){
-        if(!jc->threadContexts[i].intermediateVector->empty()){
+        if(!jc->threadContexts[i].intermediateVector.empty()){
             return i;
         }
     }
@@ -136,20 +153,20 @@ int findFirstNotEmptyVector(void *job){
 
 IntermediatePair popMaxKey(void* job,int index){
     JobContext* jc =  (JobContext*)job;
-    auto length = jc->threadContexts[index].intermediateVector->size();
+    auto length = jc->threadContexts[index].intermediateVector.size();
 
-    IntermediatePair maxPair = jc->threadContexts[index].intermediateVector->at(length-1);
+    IntermediatePair maxPair = jc->threadContexts[index].intermediateVector.at(length-1);
 
     for (int i=0;i <jc->numOfThreads;i++ ) {
-        length = jc->threadContexts[i].intermediateVector->size();
+        length = jc->threadContexts[i].intermediateVector.size();
         if(length == 0){ continue;}
-        auto curKey =  jc->threadContexts[i].intermediateVector->at(length-1);
+        auto curKey =  jc->threadContexts[i].intermediateVector.at(length-1);
         if(maxPair.first < curKey.first){
             maxPair= curKey;
             index = i;
         }
     }
-    jc->threadContexts[index].intermediateVector->pop_back();
+    jc->threadContexts[index].intermediateVector.pop_back();
     return maxPair;
 }
 
@@ -159,17 +176,14 @@ void appendToShuffleQ(void* job ,IntermediatePair pair){
     for (auto& vec:jc->shuffledQueue){
         if ((!vec.empty())&&(compareIfKeysEqual(pair,vec.at (0)))){
             vec.push_back(pair);
-//            jc->jobStateCounter++;
             success = true;
             break;
         }
     }
-
     if(!success){
-        IntermediateVec newKeyVec;
+        IntermediateVec newKeyVec; // allocation?
         newKeyVec.push_back(pair);
         jc->shuffledQueue.push_front(newKeyVec);
-//        jc->intermediateVecCounter++;
     }
 }
 
@@ -177,9 +191,10 @@ void shuffle(void* mainThread){
     ThreadContext* tc = (ThreadContext*)mainThread;
 
     for (int i=0;i<tc->job->numOfThreads;i++) {
-        tc->job->totalNumOfPairs += tc->job->threadContexts[i].intermediateVector->size();
+        tc->job->totalNumOfPairs += tc->job->threadContexts[i].intermediateVector.size();
     }
-    (*tc->job->jobStateCounter) += (uint64_t)1 << 62;
+//    updateStage(tc->job,MAP_STAGE);
+//    (*tc->job->jobStateCounter) += (uint64_t)1 << 62;
     auto mask = tc->job->totalNumOfPairs<<31;
     (*tc->job->jobStateCounter) &=  0xC000000000000000;
     (*tc->job->jobStateCounter) |= mask;
@@ -197,53 +212,46 @@ void shuffle(void* mainThread){
 //        printf("shuffle counter: %lu\n",tc->job->jobStateCounter->load()&31);
         index = findFirstNotEmptyVector (tc->job);
     }
+    for (auto& vec:tc->job->shuffledQueue) {
+        printInterVectors(&vec);
+    }
 
-
-//    pthread_mutex_lock(&mutexPrints);
-//    printf("total number of pairs: %lu\n",tc->job->totalNumOfPairs);
-//    printf("actual number of pairs: %lu\n",((tc->job->jobStateCounter->load() >> 31) & (0x7FFFFFFF)));
-//    pthread_mutex_unlock(&mutexPrints);
-//      for (auto& vec:tc->job->shuffledQueue){
-//          printInterVectors(&vec);
-//      }
 }
 
 void reduce (void *thread){
     ThreadContext* tc = (ThreadContext*)thread;
+
+//    updateStage(tc->job,SHUFFLE_STAGE); // critical section
     if(tc->job->jobState.stage == SHUFFLE_STAGE){
-        (*tc->job->jobStateCounter) += (uint64_t)1 << 62;
+        (*tc->job->jobStateCounter) += (uint64_t)1 << 62;//TODO:MUTEX?
         auto mask = tc->job->totalNumOfPairs<<31;
         (*tc->job->jobStateCounter) &=  0xC000000000000000;
         (*tc->job->jobStateCounter) |= mask;
         tc->job->jobState.stage = REDUCE_STAGE;
     }
+
     while(!tc->job->shuffledQueue.empty()){
+//        printf("output counter: %lu\n",tc->job->jobStateCounter->load()&31);
         pthread_mutex_lock (&tc->job->mutexReduce);
+        if (tc->job->shuffledQueue.empty())
+        {
+            return;
+        }
         IntermediateVec currentVector = tc->job->shuffledQueue.back();
         tc->job->shuffledQueue.pop_back();
         pthread_mutex_unlock (&tc->job->mutexReduce);
         tc->job->client->reduce (&currentVector,thread);
-        (*tc->job->jobStateCounter) += currentVector.size();
+        (*tc->job->jobStateCounter) += currentVector.size();//TODO:MUTEX?
+
 //        printf("output counter: %lu\n",tc->job->jobStateCounter->load()&31);
 
     }
-//    pthread_mutex_lock(&mutexPrints);
-//    printf("Output vector: \n");
-//
-//    for (auto& p : tc->job->outputVec) {
-//        std::cout <<"( "<< ((const KChar*)p.first)->c<< ", "<<
-//        ((const VCount*)p.second)->count<<" )";
-//    }
-//    printf("\n");
-//
-//    pthread_mutex_unlock(&mutexPrints);
 }
 
 
 JobHandle startMapReduceJob(const MapReduceClient& client,
                             const InputVec& inputVec, OutputVec& outputVec,
                             int multiThreadLevel){
-
     // Initialize job context struct
     JobContext *jc = new JobContext{.client=&client,
                                     .inputVec = inputVec,
@@ -258,13 +266,14 @@ JobHandle startMapReduceJob(const MapReduceClient& client,
     };
 
     // update the job state to be in map stage
+//    updateStage(jc,UNDEFINED_STAGE);
     (*(jc->jobStateCounter)) |= (uint64_t)1 << 62;
     (*(jc->jobStateCounter)) |= jc->inputVec.size() << 31;
     jc->jobState.stage = MAP_STAGE;
 
     // create threads and their contexts
     for (int i = 0; i < multiThreadLevel; ++i) {
-        jc->threadContexts[i] = {.id=i,.intermediateVector=new IntermediateVec(),.job=jc};
+        jc->threadContexts[i] = {.id=i,.intermediateVector=IntermediateVec(),.job=jc,.hasWaited=false};
         if(pthread_create (jc->threads + i,NULL,threadStartFunc,jc->threadContexts + i)!= 0){
             fprintf(stderr,"ERROR");
             exit(1);
@@ -275,6 +284,16 @@ JobHandle startMapReduceJob(const MapReduceClient& client,
 
 void waitForJob(JobHandle job){
 
+    JobContext* jc = (JobContext *)(job);
+    for (unsigned int i = 0; i < jc->numOfThreads; i++)
+    {
+        if (jc->threadContexts[i].hasWaited){continue;}
+        jc->threadContexts[i].hasWaited= true;
+        if (pthread_join(jc->threads[i], nullptr) != 0)
+        {
+            printf("system error: pthread_join error\n");
+        }
+    }
 }
 void getJobState(JobHandle job, JobState* state){
     auto jc = (JobContext *) job;
@@ -287,7 +306,6 @@ void getJobState(JobHandle job, JobState* state){
         exit(1);
     }
     uint64_t alreadyProcessed = curCounter & (0x7FFFFFFF);
-//    printf("already processed: %lu\n",alreadyProcessed);
     jc->jobState.percentage = (100 * (float)alreadyProcessed/(float)total);
 //    jc->jobState.stage =(stage_t) (curCounter << 62);
     state->stage = jc->jobState.stage;
@@ -295,6 +313,9 @@ void getJobState(JobHandle job, JobState* state){
 }
 void closeJobHandle(JobHandle job){
 
+    auto jc = (JobContext *) job;
+    waitForJob(job);
+    delete jc;
 }
 
 
