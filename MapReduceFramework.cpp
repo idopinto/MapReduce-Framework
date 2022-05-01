@@ -264,6 +264,9 @@ void shuffle(void* mainThread){
         index = findFirstNotEmptyVector (tc->job);
 
     }
+
+    (*tc->job->jobStateCounter) = (tc->job->totalNumOfPairs<<31 | (uint64_t) REDUCE_STAGE << 62);
+//    tc->job->jobState.stage = REDUCE_STAGE;
 //    printf("percentage %f\n",tc->job->jobState.percentage);
 //    printf("Done\n");
 //    for (auto& vec:tc->job->shuffledQueue) {
@@ -275,10 +278,10 @@ void shuffle(void* mainThread){
 void reduce (void *thread){
     ThreadContext* tc = (ThreadContext*)thread;
 
-    if(tc->job->jobState.stage == SHUFFLE_STAGE){
-        (*tc->job->jobStateCounter) = (tc->job->totalNumOfPairs<<31 | (uint64_t) REDUCE_STAGE << 62);
-        tc->job->jobState.stage = REDUCE_STAGE;
-    }
+//    if(tc->job->jobState.stage == SHUFFLE_STAGE){
+//        (*tc->job->jobStateCounter) = (tc->job->totalNumOfPairs<<31 | (uint64_t) REDUCE_STAGE << 62);
+//        tc->job->jobState.stage = REDUCE_STAGE;
+//    }
 
     while(!tc->job->shuffledQueue.empty()){
         pthread_mutex_lock (&tc->job->mutexReduce);
@@ -357,21 +360,22 @@ void getJobState(JobHandle job, JobState* state){
     uint64_t curCounter = *jc->jobStateCounter;  // receive current details
     uint64_t total, alreadyProcessed;
     // manipulation to get correct percentage
-    if(jc->jobState.stage == MAP_STAGE){
+    if(curCounter >> 62 == MAP_STAGE){
         total = jc->inputVec.size();
-        alreadyProcessed = ((curCounter >> 31) & (0x7FFFFFFF));
     }
     else{
         total = ((curCounter >> 31) & (0x7FFFFFFF));
-        alreadyProcessed = curCounter & (0x7FFFFFFF);
     }
+    alreadyProcessed = curCounter & (0x7FFFFFFF);
     if(total == 0){
         pthread_mutex_unlock (&jc->mutexGetJob);
         printf("Division by zero\n ");
         return;}
-    jc->jobState.percentage = (100 * (float)alreadyProcessed/(float)total);
-    state->stage = jc->jobState.stage;
-    state->percentage = jc->jobState.percentage;
+    auto per = (100 * (float)alreadyProcessed/(float)total);
+    jc->jobState.percentage = per;
+    state->stage = static_cast<stage_t>(curCounter >> 62);
+//    state->percentage = jc->jobState.percentage;
+    state->percentage = per;
     pthread_mutex_unlock (&jc->mutexGetJob);
 }
 void closeJobHandle(JobHandle job){
