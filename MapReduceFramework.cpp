@@ -57,7 +57,7 @@ typedef struct JobContext{
     InputVec inputVec;
     OutputVec *outputVec;
     int  numOfThreads;
-
+    bool hasWaitCalledOnJob;
     JobState jobState{};
     pthread_t* threads;
     ThreadContext* threadContexts;
@@ -65,60 +65,85 @@ typedef struct JobContext{
     std::atomic<uint64_t> *jobStateCounter;
     Barrier *barrier;
 
+
     uint64_t indexToProcessMap=0;
     uint64_t totalNumOfPairs=0;
     pthread_mutex_t mutexMap = PTHREAD_MUTEX_INITIALIZER;
     pthread_mutex_t mutexEmit = PTHREAD_MUTEX_INITIALIZER;
     pthread_mutex_t mutexReduce =  PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_t mutexGetJob =  PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_t mutexWait =  PTHREAD_MUTEX_INITIALIZER;
 
     JobContext(const MapReduceClient& client,const InputVec &inputVec,OutputVec* outputVec,int numOfThreads){
         this->client = &client;
         this->inputVec = inputVec;
         this->outputVec = outputVec;
         this->numOfThreads = numOfThreads;
-
+        this->hasWaitCalledOnJob = false;
         this->jobState = {.stage= UNDEFINED_STAGE,.percentage = 0.0};
-        this->threads = new pthread_t[numOfThreads];
-        this->threadContexts = new ThreadContext[numOfThreads];
-        this->jobStateCounter = new std::atomic<uint64_t>(0);
-        this->barrier = new Barrier(numOfThreads);
-//        this->indexToProcessMap = 0;
-//        this->totalNumOfPairs = 0;
+        this->threads = new (std::nothrow)pthread_t[numOfThreads];
+        if(this->threads == nullptr){
+            printf("memory allocation failure\n");
+        }
+        this->threadContexts = new (std::nothrow) ThreadContext[numOfThreads];
+        if(this->threadContexts == nullptr){
+            printf("memory allocation failure\n");
+        }
+        this->jobStateCounter = new (std::nothrow) std::atomic<uint64_t>(0);
+        if(this->jobStateCounter == nullptr){
+            printf("memory allocation failure\n");
+        }
+        this->barrier = new (std::nothrow) Barrier(numOfThreads);
+        if(this->barrier == nullptr){
+            printf("memory allocation failure\n");
+        }
     }
-//    const MapReduceClient *client;
-//    InputVec inputVec;
-//    OutputVec *outputVec;
-//    int  numOfThreads;
-//    JobState jobState;
-//    pthread_t* threads;
-//    ThreadContext* threadContexts;
-//    std::deque<IntermediateVec> shuffledQueue;
-//    std::atomic<uint64_t> *jobStateCounter;
-//    Barrier *barrier;
-//    uint32_t indexToProcessMap=0;
-//    uint64_t totalNumOfPairs=0;
-//    pthread_mutex_t mutexMap = PTHREAD_MUTEX_INITIALIZER;
-//    pthread_mutex_t mutexEmit = PTHREAD_MUTEX_INITIALIZER;
-//    pthread_mutex_t mutexReduce =  PTHREAD_MUTEX_INITIALIZER;
-//    pthread_mutex_t mutexGetJobState =  PTHREAD_MUTEX_INITIALIZER;
-
     ~JobContext(){
         delete[] threadContexts;
         delete[] threads;
         delete jobStateCounter;
         delete barrier;
 
-        if (pthread_mutex_destroy(&this->mutexMap) != 0)
+        auto retVal = pthread_mutex_destroy(&this->mutexMap) ;
+        if (retVal == EBUSY)
+        {
+            printf("system error: (MAP) error on pthread_mutex_destroy\nThe mutex is currently owned by another thread\n");
+        }
+        else if(retVal == EINVAL)
+        {
+            printf("system error: (MAP) error on pthread_mutex_destroy\nThe value specified for the argument is not correct\n");
+
+        }
+
+//        if (pthread_mutex_destroy(&this->mutexEmit) != 0)
+//        {
+//            printf("system error: error on pthread_mutex_destroy\n");
+//        }
+        auto retVal3 = pthread_mutex_destroy(&this->mutexReduce) ;
+        auto retVal2 = pthread_mutex_destroy(&this->mutexEmit) ;
+        if (retVal2 == EBUSY)
+        {
+            printf("system error: (EMIT) error on pthread_mutex_destroy\nThe mutex is currently owned by another thread\n");
+        }
+        else if(retVal2 == EINVAL)
+        {
+            printf("system error: (EMIT) error on pthread_mutex_destroy\nThe value specified for the argument is not correct\n");
+
+        }
+        if (retVal3 == EBUSY)
+        {
+            printf("system error: (REDUCE) error on pthread_mutex_destroy\nThe mutex is currently owned by another thread\n");
+        }
+        else if(retVal3 == EINVAL)
+        {
+            printf("system error: (REDUCE) error on pthread_mutex_destroy\nThe value specified for the argument is not correct\n");
+
+        }
+        if (pthread_mutex_destroy(&this->mutexWait) != 0)
         {
             printf("system error: error on pthread_mutex_destroy\n");
         }
-
-        if (pthread_mutex_destroy(&this->mutexEmit) != 0)
-        {
-            printf("system error: error on pthread_mutex_destroy\n");
-        }
-
-        if (pthread_mutex_destroy(&this->mutexReduce) != 0)
+        if (pthread_mutex_destroy(&this->mutexGetJob) != 0)
         {
             printf("system error: error on pthread_mutex_destroy\n");
         }
@@ -129,10 +154,7 @@ typedef struct JobContext{
 
 void emit2 (K2* key, V2* value, void* context){
     ThreadContext* tc = (ThreadContext*)context;
-//    pthread_mutex_lock(&tc->job->mutexEmit);
     tc->intermediateVector.emplace_back(key,value);
-//    pthread_mutex_unlock(&tc->job->mutexEmit);
-
 }
 
 void emit3 (K3* key, V3* value, void* context){
@@ -145,18 +167,25 @@ void emit3 (K3* key, V3* value, void* context){
 void* threadStartFunc(void* thread){
     ThreadContext* tc = (ThreadContext*)thread;
     auto limit = tc->job->inputVec.size ();
+//    tc->job->indexToProcessMap = tc->job->jobStateCounter->load()&(0x7FFFFFFF);
+//    (*tc->job->jobStateCounter)++;
     /* Map stage */
     while(tc->job->indexToProcessMap < limit){
 
         pthread_mutex_lock(&tc->job->mutexMap);
-        if(tc->job->indexToProcessMap >= limit){break;}
+        if(tc->job->indexToProcessMap >= limit){
+            pthread_mutex_unlock(&tc->job->mutexMap);
+            break;}
         auto current_pair = tc->job->inputVec[tc->job->indexToProcessMap]; // critical section
         (*tc->job->jobStateCounter)++;
-        tc->job->indexToProcessMap = tc->job->jobStateCounter->load()& (0x7FFFFFFF);
+        tc->job->indexToProcessMap = tc->job->jobStateCounter->load()&(0x7FFFFFFF);
         pthread_mutex_unlock(&tc->job->mutexMap);
         tc->job->client->map (current_pair.first, current_pair.second, thread);
+        (*tc->job->jobStateCounter) += (uint64_t)1 << 31;
+
 
     }
+//    printf("percentage map %f\n",tc->job->jobState.percentage);
 
     /* Sort */
     std::sort (tc->intermediateVector.begin (), tc->intermediateVector.end (), compareKeys);
@@ -172,7 +201,6 @@ void* threadStartFunc(void* thread){
     tc->job->barrier->barrier();
     reduce(thread);
     return nullptr;
-//    pthread_exit(NULL);
 }
 
 int findFirstNotEmptyVector(void *job){
@@ -225,15 +253,19 @@ void appendToShuffleQ(void* job ,IntermediatePair pair){
 void shuffle(void* mainThread){
     ThreadContext* tc = (ThreadContext*)mainThread;
     (*tc->job->jobStateCounter) = (tc->job->totalNumOfPairs<<31 | (uint64_t) SHUFFLE_STAGE << 62);
+//    tc->job->jobState.percentage = 0.0;
     tc->job->jobState.stage = SHUFFLE_STAGE;
     int index = findFirstNotEmptyVector (tc->job);
 
     while(index != -1){
-        appendToShuffleQ (tc->job,popMaxKey(tc->job,index));
+//        printf("percentage shuffle %f\n",tc->job->jobState.percentage);
         (*tc->job->jobStateCounter)++;
+        appendToShuffleQ (tc->job,popMaxKey(tc->job,index));
         index = findFirstNotEmptyVector (tc->job);
+
     }
-    printf("Done\n");
+//    printf("percentage %f\n",tc->job->jobState.percentage);
+//    printf("Done\n");
 //    for (auto& vec:tc->job->shuffledQueue) {
 //        printInterVectors(&vec);
 //    }
@@ -250,7 +282,9 @@ void reduce (void *thread){
 
     while(!tc->job->shuffledQueue.empty()){
         pthread_mutex_lock (&tc->job->mutexReduce);
-        if (tc->job->shuffledQueue.empty()){return;}
+        if (tc->job->shuffledQueue.empty()){
+            pthread_mutex_unlock (&tc->job->mutexReduce);
+            return;}
         IntermediateVec currentVector = tc->job->shuffledQueue.back();
         tc->job->shuffledQueue.pop_back();
         pthread_mutex_unlock (&tc->job->mutexReduce);
@@ -267,7 +301,7 @@ JobHandle startMapReduceJob(const MapReduceClient& client,
     JobContext *jc = new JobContext(client,inputVec,&outputVec,multiThreadLevel);
     // update the job state to be in map stage
     (*(jc->jobStateCounter)) = (uint64_t)1 << 62;
-    (*(jc->jobStateCounter)) |= jc->inputVec.size() << 31;
+//    (*(jc->jobStateCounter)) |= jc->inputVec.size() << 31;
     jc->jobState.stage = MAP_STAGE;
     // create threads and their contexts
     for (int i = 0; i < multiThreadLevel; ++i) {
@@ -286,30 +320,59 @@ JobHandle startMapReduceJob(const MapReduceClient& client,
 void waitForJob(JobHandle job){
 
     JobContext* jc = (JobContext *)(job);
-    for (int i = 0; i < jc->numOfThreads; i++)
-    {
-        if (jc->threadContexts[i].hasWaited){continue;}
-        jc->threadContexts[i].hasWaited= true;
+    pthread_mutex_lock(&jc->mutexWait);
+    if(jc->hasWaitCalledOnJob){
+        printf("calling waitForJob twice from the same process");
+        pthread_mutex_unlock(&jc->mutexWait);
+        return;
+    }
+    else{jc->hasWaitCalledOnJob = true;}
+    pthread_mutex_unlock(&jc->mutexWait);
+    for (int i = 0; i < jc->numOfThreads; ++i) {
         if (pthread_join(jc->threads[i], nullptr) != 0)
         {
             printf("system error: pthread_join error\n");
+            exit(1);
         }
     }
 }
+
+
+//    for (int i = 0; i < jc->numOfThreads; i++)
+//    {
+//        if (jc->threadContexts[i].hasWaited){
+//
+//            continue;}
+//        jc->threadContexts[i].hasWaited= true;
+//        if (pthread_join(jc->threads[i], nullptr) != 0)
+//        {
+//            printf("system error: pthread_join error\n");
+//            exit(1);
+//        }
+//    }
+
 void getJobState(JobHandle job, JobState* state){
     auto jc = (JobContext *) job;
+    pthread_mutex_lock (&jc->mutexGetJob);
     uint64_t curCounter = *jc->jobStateCounter;  // receive current details
-//    printf("cur Counter %lu\n",jc->jobStateCounter->load()&31);
+    uint64_t total, alreadyProcessed;
     // manipulation to get correct percentage
-    uint64_t total = ((curCounter >> 31) & (0x7FFFFFFF));
-    if(total == 0){printf("Division by zero\n ");}
-//        exit(1);
-    uint64_t alreadyProcessed = curCounter & (0x7FFFFFFF);
-//    printf("%lu / %lu\n",alreadyProcessed,total);
+    if(jc->jobState.stage == MAP_STAGE){
+        total = jc->inputVec.size();
+        alreadyProcessed = ((curCounter >> 31) & (0x7FFFFFFF));
+    }
+    else{
+        total = ((curCounter >> 31) & (0x7FFFFFFF));
+        alreadyProcessed = curCounter & (0x7FFFFFFF);
+    }
+    if(total == 0){
+        pthread_mutex_unlock (&jc->mutexGetJob);
+        printf("Division by zero\n ");
+        return;}
     jc->jobState.percentage = (100 * (float)alreadyProcessed/(float)total);
-//    jc->jobState.stage = static_cast<stage_t>((curCounter >> 62) & 3);
     state->stage = jc->jobState.stage;
     state->percentage = jc->jobState.percentage;
+    pthread_mutex_unlock (&jc->mutexGetJob);
 }
 void closeJobHandle(JobHandle job){
     auto jc = (JobContext *) job;
